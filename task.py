@@ -224,3 +224,25 @@ def get_information(test_path):
         most_common_ratio = -1
         most_common_color = -1
     return height, width, brightness, saturation, minmax, numcolors, most_common_ratio, most_common_color
+
+
+def get_height(driver):
+    return max(
+        driver.execute_script("return document.body.scrollHeight"),
+        driver.execute_script("return document.body.offsetHeight"),
+        driver.execute_script("return document.body.clientHeight"),
+        driver.execute_script("return document.documentElement.scrollHeight"),
+        driver.execute_script("return document.documentElement.offsetHeight"),
+        driver.execute_script("return document.documentElement.clientHeight")
+    )
+
+
+def get_width(driver):
+    return max(
+        driver.execute_script("return document.body.scrollWidth"),
+        driver.execute_script("return document.body.offsetWidth"),
+        driver.execute_script("return document.body.clientWidth"),
+        driver.execute_script("return document.documentElement.scrollWidth"),
+        driver.execute_script("return document.documentElement.offsetWidth"),
+        driver.execute_script("return document.documentElement.clientWidth")
+    )

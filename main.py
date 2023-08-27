@@ -6,6 +6,7 @@ import os
 import binascii
 
 from selenium import webdriver
+from bs4 import BeautifulSoup
 
 import task
 
@@ -15,25 +16,30 @@ import shutil
 from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.common.by import By
 
+# global counter for <img>
+image_id = 0
+
+def script_add_tag_for_all_image():
+    script = "var image_id = " + str(image_id) + ";" + '''
+            image_elements = document.getElementsByTagName(\"img\");
+            for(let i=0;i < image_elements.length; i++)
+                image_elements[i]
+        '''
 
 if __name__ == "__main__":
-    urls = []
     with open('./resource/urls.txt', 'r', encoding='utf8') as f:
         urls = f.readlines()
-    urls = [url[:-1] for url in urls]
 
-    dir_path = "./tmp"
     # 创建驱动
-    path_to_edge_driver = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedgedriver.exe'
-    driver = webdriver.Edge()
+    driver = webdriver.Chrome()
     driver.maximize_window()
-    headers = {"Connection": "close"}
 
     m = 0
     times = 0
+    max_scroll_times = 15
     for url in urls:
         times = times+1
-        print("This is " + url)
+        # print("This is " + url)
 
         pic = xlwt.Workbook(encoding='utf-8', style_compression=0)
         sheet = pic.add_sheet('广告收集', cell_overwrite_ok=True)
@@ -59,46 +65,275 @@ if __name__ == "__main__":
         try:
             driver.get(url)
             # 获取页面初始高度
-            initial_height = driver.execute_script("return document.body.scrollHeight")
+            initial_height = task.get_height(driver)
 
+            scroll_times = 0
             # 模拟滚动操作
             while True:
+                scroll_times = scroll_times + 1
                 # 执行滚动操作
-                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                driver.execute_script("window.scrollTo(0, " + str(initial_height) + ");")
                 # 等待页面加载
-                time.sleep(1)
+                driver.implicitly_wait(20)
                 # 获取滚动后的高度
-                new_height = driver.execute_script("return document.body.scrollHeight")
+                new_height = task.get_height(driver)
                 # 判断是否到达页面底部
                 if new_height == initial_height:
                     break
                 # 更新页面初始高度
                 initial_height = new_height
 
+                if scroll_times > max_scroll_times:
+                    break
+
             # 获取页面总面积
-            total_area = driver.execute_script("return document.body.scrollWidth * document.body.scrollHeight")
+            total_area = task.get_width(driver) * initial_height
+
         except Exception as e:
             print("driver get error")
 
-        img_elements = driver.find_elements(By.TAG_NAME, "img")
+        driver.implicitly_wait(50)
 
-        length = len(img_elements)
+        driver.switch_to.default_content()
+        driver.execute_script(script_add_tag_for_all_image())
 
-        for img in img_elements:
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        soup.prettify()
+        imgs = soup.find_all('img')
+        srcs = []
+        for img in imgs:
+            srcs.append(img.get('src') or img.get('data-url'))
+            print(srcs[-1])
+
+        for src in srcs:
+            if not src:
+                print(">>>size")
+                print("No src")
+                continue
+
+            img = driver.find_element(By.XPATH, "//img[@src=\'" + src + "\']")
+
+            if not img:
+                print(src)
+                print(">>>size")
+                print("No element")
+                continue
+
+            pos_x = img.location.get('x')
+            pos_y = img.location.get('y')
+            size_x, size_y = img.size.values()
+
+            print(src)
+            print(">>>size")
+            print(size_x, size_y)
+
+            driver.execute_script(
+                '''
+                if(typeof(resize_log) === 'undefined')
+                    resize_log = [];
+
+                const resizeOb= new ResizeObserver(entries => {
+                    for(const entry of entries) {
+                        var j = {};
+                        j.tag = "e8fa9d";
+                        j.src = entry.target.src;
+                        j.width = entry.target.width;
+                        j.height = entry.target.height;
+
+                        resize_log.push(j);
+                    }
+                });
+
+                elements = document.getElementsByTagName("img")
+                for(let i=0; i<elements.length; i++)
+                    resizeOb.observe(elements[i])
+                '''
+            )
+
+        frame_elements = driver.find_elements(By.TAG_NAME, "iframe")
+
+        for frame in frame_elements:
+            driver.switch_to.default_content()
+
+            try:
+                offset_x, offset_y = frame.location.get("x"), frame.location.get("y")
+            except WebDriverException as e:
+                print(f"Failed to get iframe for frame {frame}. Reason: {e}")
+                continue
+
+            driver.switch_to.frame(frame)
+
+            soup = BeautifulSoup(driver.page_source, 'html.parser')
+            soup.prettify()
+            imgs = soup.find_all('img')
+            srcs = []
+            for img in imgs:
+                srcs.append(img.get('src') or img.get('data-url'))
+                print(srcs[-1])
+
+            for src in srcs:
+                if not src:
+                    print(">>>size")
+                    continue
+
+                img = driver.find_element(By.XPATH, "//img[@src=\'" + src + "\']")
+
+                if not img:
+                    print(src)
+                    print(">>>size")
+                    print("No element")
+                    continue
+
+                pos_x = img.location.get('x') + offset_x
+                pos_y = img.location.get('y') + offset_y
+                size_x, size_y = img.size.values()
+
+                print(src)
+                print(">>>size")
+                print(size_x, size_y)
+
+                driver.execute_script(
+                    '''
+                    if(typeof(resize_log) === 'undefined')
+                        resize_log = [];
+
+                    const resizeOb= new ResizeObserver(entries => {
+                        for(const entry of entries) {
+                            var j = {};
+                            j.tag = "e8fa9d";
+                            j.src = entry.target.src;
+                            j.width = entry.target.width;
+                            j.height = entry.target.height;
+
+                            resize_log.push(j);
+                        }
+                    });
+
+                    elements = document.getElementsByTagName("img")
+                    for(let i=0; i<elements.length; i++)
+                        resizeOb.observe(elements[i])
+                    '''
+                )
+
+        driver.switch_to.default_content()
+        resize_log = driver.execute_script('return resize_log')
+
+        frame_elements = driver.find_elements(By.TAG_NAME, "iframe")
+
+        for frame in frame_elements:
+            try:
+                driver.switch_to.frame(frame)
+            except WebDriverException as e:
+                print(f"Failed to get iframe for frame {frame}. Reason: {e}")
+                continue
+
+            resize_log.extend(driver.execute_script('return resize_log'))
+
+        '''
+        while True:
+            li = driver.execute_script(
+                "var imgElements = document.getElementsByTagName(\"img\");"
+                "var completeValues = [];"
+                "for (var i = 0; i < imgElements.length; i++) {"
+                "completeValues.push(imgElements[i].complete);"
+                "}"
+                "return completeValues;"
+            )
+            if False not in li:
+                break
+        '''
+
+        img_elements_len = len(driver.find_elements(By.TAG_NAME, "img"))
+
+        for i in range(img_elements_len):
+            img = driver.find_elements(By.TAG_NAME, "img")[i]
+
             try:
                 src = img.get_attribute('data-url') or img.get_attribute('src')
             except WebDriverException as e:
                 print(f"Failed to get source attribute for image {img}. Reason: {e}")
                 continue
+
             pos_x = img.location.get('x')
             pos_y = img.location.get('y')
             size_x, size_y = img.size.values()
-            print(">>>siz1")
+
+            print(src)
+            print(">>>size")
             print(size_x, size_y)
 
+        frame_elements_len = len(driver.find_elements(By.TAG_NAME, "iframe"))
+
+        for i in range(frame_elements_len):
+            driver.switch_to.default_content()
+            frame = driver.find_elements(By.TAG_NAME, "iframe")[i]
+            offset_x, offset_y = frame.location.get("x"), frame.location.get("y")
+
+            driver.switch_to.frame(frame)
+
+            img_elements_len = len(driver.find_elements(By.TAG_NAME, "img"))
+
+            for j in range(img_elements_len):
+                img = driver.find_elements(By.TAG_NAME, "img")[j]
+
+                try:
+                    src = img.get_attribute('data-url') or img.get_attribute('src')
+                except WebDriverException as e:
+                    print(f"Failed to get source attribute for image {img}. Reason: {e}")
+                    continue
+
+                pos_x = img.location.get('x') + offset_x
+                pos_y = img.location.get('y') + offset_y
+                size_x, size_y = img.size.values()
+
+                print(src)
+                print(">>>size")
+                print(size_x, size_y)
+
+
+
+        img_elements = driver.find_elements(By.TAG_NAME, "img")
+        img_in_frame = [None for i in range(len(img_elements))]
+        frame_offset = [(0, 0) for i in range(len(img_elements))]
+
+        frame_elements = driver.find_elements(By.TAG_NAME, "iframe")
+        for frame in frame_elements:
+            driver.switch_to.default_content()
+            offset_x, offset_y = frame.location.get("x"), frame.location.get("y")
+
+            driver.switch_to.frame(frame)
+            frame_img = driver.find_elements(By.TAG_NAME, "img")
+            img_elements.extend(frame_img)
+            img_in_frame.extend([frame for i in range(len(frame_img))])
+            frame_offset.extend([(offset_x, offset_y) for i in range(len(frame_img))])
+
+        length = len(img_elements)
+
+        for i in range(len(img_elements)):
+            driver.switch_to.default_content()
+
+            img = img_elements[i]
+            if img_in_frame[i]:
+                driver.switch_to.frame(img_in_frame[i])
+
+            try:
+                src = img.get_attribute('data-url') or img.get_attribute('src')
+            except WebDriverException as e:
+                print(f"Failed to get source attribute for image {img}. Reason: {e}")
+                continue
+
+            pos_x = img.location.get('x') + frame_offset[i][0]
+            pos_y = img.location.get('y') + frame_offset[i][1]
+            size_x, size_y = img.size.values()
+
+            print(src)
+            print(">>>size")
+            print(size_x, size_y)
+
+            '''
             if (pos_x == 0 and pos_y == 0) or (src is None) or ('///' in src):
                 continue
-            print(src)
+
             if "base64" in src:
                 src = src.split(',')[-1]
                 try:
@@ -127,7 +362,8 @@ if __name__ == "__main__":
                         print("get error")
             else:
                 continue
-
+            '''
+            '''
             test_path = os.path.abspath(dir_path + "\\" + str(n) + '.jpg')
             ans = task.complete_evaluate(test_path)
             if ans is None:
@@ -143,8 +379,8 @@ if __name__ == "__main__":
                         break
             word = ans[4]
             size_y, size_x, brightness, saturation, minmax, numcolor, ratio, rgb = task.get_information(test_path)
-            print(">>>siz2")
-            print(size_x, size_y)
+            # print(">>>siz2")
+            # print(size_x, size_y)
 
             # 判断是否为广告和其种类
             pos_x = (pos_x + size_x / 2) / 2880
@@ -180,7 +416,7 @@ if __name__ == "__main__":
                 sheet.write(n, 22, B)
             except Exception as e:
                 print("write execl error")
-
+            '''
             n = n + 1
 
         try:
@@ -201,3 +437,4 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"Failed to delete {file_path}. Reason: {e}")
 
+    driver.close()
