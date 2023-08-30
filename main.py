@@ -16,6 +16,9 @@ from PIL import Image
 import shutil
 from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+
+import tkinter
 
 # global counter for <img>
 image_id = 0
@@ -51,6 +54,31 @@ def script_add_tag_for_iframe():
         return [iframe_id, now_frame_id];
     '''
 
+    return script
+
+
+def script_get_element_actual_position():
+    script = '''
+        // 获取元素的绝对位置坐标（像对于页面左上角）
+        function getElementPagePosition(element){
+            //计算x坐标
+            var actualLeft = element.offsetLeft;
+            var current = element.offsetParent;
+            while (current !== null){
+                actualLeft += current.offsetLeft;
+                current = current.offsetParent;
+            }
+            //计算y坐标
+            var actualTop = element.offsetTop;
+            var current = element.offsetParent;
+            while (current !== null){
+                actualTop += (current.offsetTop+current.clientTop);
+                current = current.offsetParent;
+            }
+            //返回结果
+            return {x: actualLeft, y: actualTop}
+        }
+    '''
     return script
 
 
@@ -124,6 +152,7 @@ def scroll_through_whole_page(driver):
 def update_information_in_image_list(driver):
     for iframe_tag in range(iframe_id):
         driver.switch_to.default_content()
+        driver.save_screenshot("./tmp/tmp.png")
 
         offset = (0, 0)
         if iframe_tag:
@@ -135,6 +164,57 @@ def update_information_in_image_list(driver):
                 print(f"Failed to switch to frame {iframe_tag}. Reason: {e}")
                 continue
 
+        images = driver.execute_script(script_get_element_actual_position() + '''
+            let img_elements = document.getElementsByClassName("tracked_image_by_adpos");
+            let ret = new Array();
+            for(let i=0; i<img_elements.length; i++) {
+                let image = img_elements[i];
+                let j = {};
+                j.tag = parseInt(image.getAttribute("image-id-adpos"));
+                j.src = image.getAttribute("src");
+                j.size = { width: image.width, height: image.height};
+                j.pos = getElementPagePosition(image);
+                
+                ret.push(j);
+            }
+            return ret;
+            ''')
+
+        full_screenshot = Image.open("./tmp/tmp.png")
+        full_screenshot.show()
+
+        for image_ret in images:
+            image = image_list[image_ret["tag"]]
+
+            src = image_ret["src"]
+            pos = (image_ret["pos"]["x"] + offset[0], image_ret["pos"]["y"] + offset[1])
+            size = (image_ret["size"]["width"], image_ret["size"]["height"])
+
+            if "src" in image:
+                image["src"].append(src)
+            else:
+                image["src"] = [src]
+
+            if "pos" in image:
+                image["pos"].append(pos)
+            else:
+                image["pos"] = [pos]
+
+            if "size" in image:
+                image["size"].append(size)
+            else:
+                image["size"] = [size]
+
+            ud_border = max(0.2 * (0.5 * size[1]), 30)
+            lr_border = max(0.2 * (0.5 * size[0]), 30)
+
+            element_screenshot = full_screenshot.crop((pos[0] - lr_border,
+                                                       pos[1] - ud_border,
+                                                       pos[0] + size[0] + lr_border,
+                                                       pos[1] + size[1] + ud_border))
+
+            element_screenshot.show()
+        '''
         image_in_frame = filter(lambda x: x["frame"] == iframe_tag, image_list)
         for image in image_in_frame:
             try:
@@ -181,15 +261,21 @@ def update_information_in_image_list(driver):
                     image["size"].append(size)
                 else:
                     image["size"] = [size]
+        '''
 
 
 if __name__ == "__main__":
     with open('./resource/urls.txt', 'r', encoding='utf8') as f:
         urls = f.readlines()
 
+    screen = tkinter.Tk()
+
     # 创建驱动
-    driver = webdriver.Chrome()
-    driver.maximize_window()
+    chrome_options = Options()
+    chrome_options.add_argument('--headless')
+    chrome_options.add_argument('--window-size=' + str(screen.winfo_screenwidth()) +
+                                'x' + str(screen.winfo_screenheight()))
+    driver = webdriver.Chrome(options=chrome_options)
 
     m = 0
     times = 0
@@ -222,9 +308,13 @@ if __name__ == "__main__":
             driver.get(url)
 
             whole_page_height = scroll_through_whole_page(driver)
+            whole_page_width = task.get_width(driver)
 
             # 获取页面总面积
-            total_area = task.get_width(driver) * whole_page_height
+            total_area = whole_page_width * whole_page_height
+
+            # 设置浏览器大小为全页面大小，仅限headless模式下可用
+            driver.set_window_size(whole_page_width, whole_page_height)
 
         except Exception as e:
             print("driver get error")
