@@ -252,7 +252,6 @@ def scroll_through_whole_page(driver):
 def update_information_in_image_list(driver):
     for iframe_tag in range(iframe_id):
         driver.switch_to.default_content()
-        driver.save_screenshot("./tmp/tmp.png")
 
         offset = (0, 0)
         if iframe_tag:
@@ -264,6 +263,7 @@ def update_information_in_image_list(driver):
                 print(f"Failed to switch to frame {iframe_tag}. Reason: {e}")
                 continue
 
+        driver.save_screenshot("./tmp/tmp.png")
         images = driver.execute_script(script_get_element_actual_position() + '''
             let img_elements = document.getElementsByClassName("tracked_image_by_adpos");
             let ret = new Array();
@@ -282,7 +282,7 @@ def update_information_in_image_list(driver):
         )
 
         full_screenshot = Image.open("./tmp/tmp.png")
-        full_screenshot.show()
+        # full_screenshot.show()
 
         for image_ret in images:
             image = image_list[image_ret["tag"]]
@@ -308,7 +308,7 @@ def update_information_in_image_list(driver):
                                                        pos[0] + size[0] + lr_border,
                                                        pos[1] + size[1] + ud_border))
 
-            element_screenshot.show()
+            # element_screenshot.show()
             element_screenshot.save("./tmp/" + str(image["tag"]) + "_" + str(image_info["inner_id"]) + ".png")
 
 
@@ -412,7 +412,7 @@ def track_imgs_in_image_list(driver):
                     timer = 0
 
                     screenshot = Image.open("./tmp/tmp.png")
-                    screenshot.show()
+                    # screenshot.show()
 
                     ud_border = max(0.2 * (0.5 * size[1]), 30)
                     lr_border = max(0.2 * (0.5 * size[0]), 30)
@@ -421,7 +421,7 @@ def track_imgs_in_image_list(driver):
                                                           pos[1] - ud_border,
                                                           pos[0] + size[0] + lr_border,
                                                           pos[1] + size[1] + ud_border))
-                    element_screenshot.show()
+                    # element_screenshot.show()
                     element_screenshot.save("./tmp/" + str(image["tag"]) + "_" + str(image_info["inner_id"]) + ".png")
 
             time.sleep(once_time/1000.0)
@@ -460,47 +460,49 @@ def write_to_file(url, height, width):
 
     id_image = 0
     for image in image_list:
-        if image_check_valid(image["info"]):
-            image_dir_name = dir_name + "/" + str(id_image)
-            os.makedirs(image_dir_name)
+        image_dir_name = dir_name + "/" + str(id_image)
+        os.makedirs(image_dir_name)
 
-            infos = []
-            id_info = 0
+        infos = []
+        id_info = 0
 
-            for info in image["info"]:
-                if info_check_valid(info):
-                    try:
-                        r = requests.get(info["src"])
-                    except requests.exceptions.HTTPError as e:
-                        print(f'HTTP Error: {e}')
-                        continue
-                    except requests.exceptions.RequestException as e:
-                        print(f'Request Error: {e}')
-                        continue
+        for info in image["info"]:
+            if info_check_valid(info):
+                try:
+                    r = requests.get(info["src"])
+                except requests.exceptions.HTTPError as e:
+                    print(f'HTTP Error: {e}')
+                    continue
+                except requests.exceptions.RequestException as e:
+                    print(f'Request Error: {e}')
+                    continue
 
-                    info_dir_name = image_dir_name + "/" + str(id_info)
-                    os.makedirs(info_dir_name)
+                info_dir_name = image_dir_name + "/" + str(id_info)
+                os.makedirs(info_dir_name)
 
-                    screenshot_filepath = "./tmp/" + str(image["tag"]) + "_" + str(info["inner_id"]) + ".png"
-                    shutil.move(screenshot_filepath, info_dir_name + "/screenshot.png")
-                    Image.open(io.BytesIO(r.content)).save(info_dir_name + "/source." + imghdr.what(None, h=r.content))
+                screenshot_filepath = "./tmp/" + str(image["tag"]) + "_" + str(info["inner_id"]) + ".png"
+                shutil.move(screenshot_filepath, info_dir_name + "/screenshot.png")
+                Image.open(io.BytesIO(r.content)).save(info_dir_name + "/source." + imghdr.what(None, h=r.content))
 
-                    info_output = info.copy()
-                    info_output["inner_id"] = id_info
-                    infos.append(info_output)
+                info_output = info.copy()
+                info_output["inner_id"] = id_info
+                infos.append(info_output)
 
-                    id_info = id_info + 1
+                id_info = id_info + 1
 
-            infos_file = pd.ExcelWriter(image_dir_name + "/infos.xlsx")
-            transform_infos_to_dataframe(infos).to_excel(infos_file, index=True)
-            infos_file.close()
+        infos_file = pd.ExcelWriter(image_dir_name + "/infos.xlsx")
+        transform_infos_to_dataframe(infos).assign(valid="", advertisement="").to_excel(infos_file, index=False)
+        infos_file.close()
 
-            id_image = id_image + 1
+        if id_info:
+           id_image = id_image + 1
+        else:
+            shutil.rmtree(image_dir_name)
 
     metadata = {'width': width, 'height': height}
     pf = pd.json_normalize(data=metadata)
     meta_file = pd.ExcelWriter(dir_name + "/meta.xlsx")
-    pf.to_excel(meta_file, encoding='utf-8', index=True)
+    pf.to_excel(meta_file, index=True)
     meta_file.close()
 
 
@@ -539,9 +541,6 @@ if __name__ == "__main__":
             # 设置浏览器大小为全页面大小，仅限headless模式下可用
             driver.set_window_size(whole_page_width, whole_page_height)
 
-            # 获取页面总面积
-            total_area = whole_page_width * whole_page_height
-
         except Exception as e:
             print("driver get error")
             continue
@@ -560,9 +559,7 @@ if __name__ == "__main__":
 
         # time.sleep(3)
 
-        track_imgs_in_image_list(driver)
-        # driver.switch_to.default_content()
-        # log = driver.execute_script("return log_dic")
+        # track_imgs_in_image_list(driver)
 
         write_to_file(url, whole_page_height, whole_page_width)
 
