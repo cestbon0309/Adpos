@@ -2,16 +2,16 @@ import base64
 import requests
 import xlwt
 import time
+import pandas as pd
+import re
 import os
+import io
+import imghdr
 import binascii
 
 from selenium import webdriver
-from PIL import Image
-from bs4 import BeautifulSoup
 
 import task
-
-from io import BytesIO
 from PIL import Image
 import shutil
 from selenium.common.exceptions import WebDriverException
@@ -25,6 +25,28 @@ image_id = 0
 iframe_id = 1
 
 image_list = []
+
+
+def script_import_domtoimage():
+    script = '''
+        var script = document.createElement('script');
+        script.type = 'text/javascript';
+        script.src = 'http://localhost:8080/dom-to-image.js';
+        document.body.appendChild(script);
+    '''
+
+    return script
+
+
+def script_import_fireshot():
+    script = '''
+        var script = document.createElement('script');
+        script.type = 'text/javascript';
+        script.src = 'http://localhost:8080/fsapi.js';
+        document.body.appendChild(script);
+    '''
+
+    return script
 
 
 def script_add_tag_for_all_image():
@@ -59,26 +81,116 @@ def script_add_tag_for_iframe():
 
 def script_get_element_actual_position():
     script = '''
-        // 获取元素的绝对位置坐标（像对于页面左上角）
-        function getElementPagePosition(element){
-            //计算x坐标
-            var actualLeft = element.offsetLeft;
-            var current = element.offsetParent;
-            while (current !== null){
-                actualLeft += current.offsetLeft;
-                current = current.offsetParent;
+        if(typeof(getElementPagePosition) === 'undefined') {
+            function getElementPagePosition(element) {
+                Rect = element.getBoundingClientRect();
+                x = Rect.left;
+                y = Rect.top;
+                return {x: x, y: y};
             }
-            //计算y坐标
-            var actualTop = element.offsetTop;
-            var current = element.offsetParent;
-            while (current !== null){
-                actualTop += (current.offsetTop+current.clientTop);
-                current = current.offsetParent;
-            }
-            //返回结果
-            return {x: actualLeft, y: actualTop}
         }
     '''
+
+    '''
+        if(typeof(getElementPagePosition) === 'undefined') {
+            // 获取元素的绝对位置坐标（像对于页面左上角）
+            function getElementPagePosition(element){
+                //计算x坐标
+                var actualLeft = element.offsetLeft;
+                var current = element.offsetParent;
+                while (current !== null){
+                    actualLeft += current.offsetLeft;
+                    current = current.offsetParent;
+                }
+                //计算y坐标
+                var actualTop = element.offsetTop;
+                var current = element.offsetParent;
+                while (current !== null){
+                    actualTop += (current.offsetTop+current.clientTop);
+                    current = current.offsetParent;
+                }
+                //返回结果
+                return {x: actualLeft, y: actualTop}
+            }
+        }
+    '''
+    return script
+
+
+def script_register_log_and_set_observer():
+    script = script_get_element_actual_position() + '''
+        if(typeof(intersection_log) === 'undefined')
+            intersection_log = [];
+
+        const intersectionOb = new IntersectionObserver(entries => {
+            for(const entry of entries) {
+                let j = {};
+                
+                let image = entry.target;
+                j.tag = parseInt(image.getAttribute("image-id-adpos"));
+                j.src = image.getAttribute("src");
+                j.size = { width: image.width, height: image.height};
+                j.pos = getElementPagePosition(image);
+
+                if(j.isIntersecting() && j.size.width > 0 && j.size.height > 0 && j.pos.x > 0 && j.pos.y >0) {
+                    
+                    intersection_log.push(j);
+                }
+            }
+        });
+
+        let img_elements = document.getElementsByClassName("tracked_image_by_adpos");
+        for(let i=0; i<img_elements.length; i++) {
+            let image = img_elements[i];
+            let current = image.offsetParent;
+            while (current !== null) {
+                if(current.nodeName == "BODY") {
+                    intersectionOb.observe(image, { root: current });
+                    break;
+                }
+                current = current.offsetParent;
+            }
+        }
+        '''
+
+    return script
+
+
+def script_register_log_and_set_interval():
+    script = script_get_element_actual_position() + '''
+        if(typeof(log_dic) === 'undefined')
+            log_dic = {}
+            
+        setInterval(function() {
+            let img_elements = document.getElementsByClassName("tracked_image_by_adpos");
+            for(let i=0; i<img_elements.length; i++) {
+                let image = img_elements[i];
+                let j = {};
+                
+                j.tag = parseInt(image.getAttribute("image-id-adpos"));
+                j.src = image.getAttribute("src");
+                j.size = {width: image.width, height: image.height};
+                j.pos = getElementPagePosition(image);
+                
+                if(j.size.width > 0 && j.size.height > 0) {
+                    if(!log_dic.hasOwnProperty(j.tag))
+                        log_dic[j.tag] = new Array();
+                    let in_dic = false;
+                    for(const bef of log_dic[j.tag]) {
+                        if (j.src === bef.src && j.pos.x === bef.pos.x && j.pos.y === bef.pos.y && 
+                        j.size.width === bef.size.width && j.size.height === bef.size.height) {
+                            in_dic = true;
+                            break;
+                        }
+                    }
+                    if(!in_dic) {
+                        FireShotAPI.savePage(true, undefined, "D:/ad_position/Web/tmp/cxk.png");
+                    }
+                }
+            }
+        }, 1000);
+    '''
+
     return script
 
 
@@ -92,25 +204,13 @@ def scan_frame_add_tags(driver, frame=None):
 
     if frame:
         iframe_id, now_frame_id = driver.execute_script(script_add_tag_for_iframe(), frame)
-    '''
-    if frame:
-        if "tracked_iframe_by_adpos" in frame.get_attribute('class'):
-            now_frame_id = int(frame.get_attribute("iframe-id-adpos"));
-        else:
-            driver.execute_script("arguments[0].classList.add('tracked_iframe_by_adpos')", frame)
-            driver.execute_script("arguments[0].setAttribute('iframe-id-adpos', " + str(iframe_id) + ")", frame)
-            now_frame_id = iframe_id
-            iframe_id = iframe_id + 1
-    '''
-
-    if frame:
         driver.switch_to.frame(frame)
 
     pre_img_id = image_id
     now_img_id = driver.execute_script(script_add_tag_for_all_image())
     image_id = now_img_id
 
-    image_list.extend([{'tag': img_id, 'frame': now_frame_id} for img_id in range(pre_img_id, now_img_id)])
+    image_list.extend([{'tag': img_id, 'frame': now_frame_id, 'info': []} for img_id in range(pre_img_id, now_img_id)])
 
 
 def add_tag_for_main_and_iframe(driver):
@@ -122,7 +222,7 @@ def add_tag_for_main_and_iframe(driver):
 
 
 def scroll_through_whole_page(driver):
-    max_scroll_times = 15
+    max_scroll_times = 3
     # 获取页面初始高度
     initial_height = task.get_height(driver)
 
@@ -178,7 +278,8 @@ def update_information_in_image_list(driver):
                 ret.push(j);
             }
             return ret;
-            ''')
+            '''
+        )
 
         full_screenshot = Image.open("./tmp/tmp.png")
         full_screenshot.show()
@@ -190,20 +291,14 @@ def update_information_in_image_list(driver):
             pos = (image_ret["pos"]["x"] + offset[0], image_ret["pos"]["y"] + offset[1])
             size = (image_ret["size"]["width"], image_ret["size"]["height"])
 
-            if "src" in image:
-                image["src"].append(src)
-            else:
-                image["src"] = [src]
+            image_info = dict()
 
-            if "pos" in image:
-                image["pos"].append(pos)
-            else:
-                image["pos"] = [pos]
+            image_info["src"] = src
+            image_info["size"] = size
+            image_info["pos"] = pos
+            image_info["inner_id"] = len(image["info"])
 
-            if "size" in image:
-                image["size"].append(size)
-            else:
-                image["size"] = [size]
+            image["info"].append(image_info)
 
             ud_border = max(0.2 * (0.5 * size[1]), 30)
             lr_border = max(0.2 * (0.5 * size[0]), 30)
@@ -214,54 +309,199 @@ def update_information_in_image_list(driver):
                                                        pos[1] + size[1] + ud_border))
 
             element_screenshot.show()
-        '''
-        image_in_frame = filter(lambda x: x["frame"] == iframe_tag, image_list)
-        for image in image_in_frame:
+            element_screenshot.save("./tmp/" + str(image["tag"]) + "_" + str(image_info["inner_id"]) + ".png")
+
+
+def set_interval_in_main_and_iframe(driver):
+    for iframe_tag in range(iframe_id):
+        driver.switch_to.default_content()
+        if iframe_tag:
             try:
-                img_element = driver.find_element(By.XPATH, "//img[@image-id-adpos = '" + str(image["tag"]) + "']")
-                client_position = driver.execute_script("arguments[0].scrollIntoView({ block: \"center\"});" +
-                                            "return arguments[0].getBoundingClientRect();", img_element)
-                driver.save_screenshot("temp.png")
+                iframe = driver.find_element(By.XPATH, "//iframe[@iframe-id-adpos='" + str(iframe_tag) + "']")
+                driver.switch_to.frame(iframe)
             except WebDriverException as e:
-                print(f"Failed to get image {image['tag']}. Reason: {e}")
+                print(f"Failed to switch to frame {iframe_tag}. Reason: {e}")
                 continue
 
-            if img_element:
-                src = None
-                try:
-                    src = img_element.get_attribute('src')
-                except WebDriverException as e:
-                    print(f"Failed to get src attribute for {img_element}. Reason: {e}")
+        driver.execute_script(script_register_log_and_set_interval())
 
-                pos_in_frame = (img_element.location.get('x'), img_element.location.get('y'))
-                pos = pos_in_frame + offset
-                size = img_element.size.values()
+    return
 
-                full_screenshot = Image.open("temp.png")
 
-                ud_border = max(0.2*(0.5*client_position["height"]), 30)
-                lr_border = max(0.2*(0.5*client_position["width"]), 30)
-                element_screenshot = full_screenshot.crop((client_position["left"] - lr_border,
-                                                           client_position["top"] - ud_border,
-                                                           client_position["right"] + lr_border,
-                                                           client_position["bottom"] + ud_border))
-                element_screenshot.show()
+def import_domtoimage_in_main_and_iframe(driver):
+    for iframe_tag in range(iframe_id):
+        driver.switch_to.default_content()
+        if iframe_tag:
+            try:
+                iframe = driver.find_element(By.XPATH, "//iframe[@iframe-id-adpos='" + str(iframe_tag) + "']")
+                driver.switch_to.frame(iframe)
+            except WebDriverException as e:
+                print(f"Failed to switch to frame {iframe_tag}. Reason: {e}")
+                continue
 
-                if "src" in image:
-                    image["src"].append(src)
-                else:
-                    image["src"] = [src]
+        driver.execute_script(script_import_domtoimage())
+    return
 
-                if "pos" in image:
-                    image["pos"].append(pos)
-                else:
-                    image["pos"] = [pos]
 
-                if "size" in image:
-                    image["size"].append(size)
-                else:
-                    image["size"] = [size]
-        '''
+def import_fireshot_in_main_and_iframe(driver):
+    for iframe_tag in range(iframe_id):
+        driver.switch_to.default_content()
+        if iframe_tag:
+            try:
+                iframe = driver.find_element(By.XPATH, "//iframe[@iframe-id-adpos='" + str(iframe_tag) + "']")
+                driver.switch_to.frame(iframe)
+            except WebDriverException as e:
+                print(f"Failed to switch to frame {iframe_tag}. Reason: {e}")
+                continue
+
+        driver.execute_script(script_import_fireshot())
+    return
+
+
+def not_in_list(infos, src, size, pos):
+    for info in infos:
+        if info["src"] == src and info["size"] == size and info["pos"] == pos:
+            return False
+
+    return True
+
+
+def track_imgs_in_image_list(driver):
+    for image in image_list:
+        driver.switch_to.default_content()
+        offset = (0, 0)
+
+        iframe_tag = image["frame"]
+        if iframe_tag:
+            try:
+                iframe = driver.find_element(By.XPATH, "//iframe[@iframe-id-adpos='" + str(iframe_tag) + "']")
+                offset = (iframe.location.get('x'), iframe.location.get('y'))
+                driver.switch_to.frame(iframe)
+            except WebDriverException as e:
+                print(f"Failed to switch to frame {iframe_tag}. Reason: {e}")
+                continue
+
+        max_size = 6
+        max_time, once_time, timer = 4000, 1000, 0
+        while len(image["info"]) <= max_size:
+            driver.save_screenshot("./tmp/tmp.png")
+
+            info = driver.execute_script(script_get_element_actual_position() + '''
+                let image = document.querySelector("img[image-id-adpos='%s']");
+                
+                let j = {src: null, size: null, pos: null};
+                if(image) {
+                    j.src = image.getAttribute("src");
+                    j.size = { width: image.width, height: image.height};
+                    j.pos = getElementPagePosition(image);
+                }
+                return j;
+                ''' % (str(image["tag"]))
+            )
+
+            if info["pos"] and info["size"]:
+                src = info["src"]
+                pos = (info["pos"]["x"] + offset[0], info["pos"]["y"] + offset[1])
+                size = (info["size"]["width"], info["size"]["height"])
+                inner_id = len(image["info"])
+
+                if not_in_list(image["info"], src, size, pos):
+                    image_info = {'src': src, 'pos': pos, 'size': size, 'inner_id': inner_id}
+
+                    image["info"].append(image_info)
+                    timer = 0
+
+                    screenshot = Image.open("./tmp/tmp.png")
+                    screenshot.show()
+
+                    ud_border = max(0.2 * (0.5 * size[1]), 30)
+                    lr_border = max(0.2 * (0.5 * size[0]), 30)
+
+                    element_screenshot = screenshot.crop((pos[0] - lr_border,
+                                                          pos[1] - ud_border,
+                                                          pos[0] + size[0] + lr_border,
+                                                          pos[1] + size[1] + ud_border))
+                    element_screenshot.show()
+                    element_screenshot.save("./tmp/" + str(image["tag"]) + "_" + str(image_info["inner_id"]) + ".png")
+
+            time.sleep(once_time/1000.0)
+            timer = timer + once_time
+            if timer >= max_time:
+                break
+
+
+def transform_infos_to_dataframe(infos):
+    p = pd.json_normalize(data=infos)
+
+    return p
+
+
+def info_check_valid(info):
+    if info["src"] and info["size"][0] > 0 and info["size"][1] > 0:
+        return True
+    return False
+
+
+def image_check_valid(infos):
+    for info in infos:
+        if info_check_valid(info):
+            return True
+
+    return False
+
+
+def write_to_file(url, height, width):
+    dir_name = './out/' + re.sub(r'[\\/:*?"<>|]', '_', url)
+
+    if os.path.exists(dir_name):
+        shutil.rmtree(dir_name)
+
+    os.makedirs(dir_name)
+
+    id_image = 0
+    for image in image_list:
+        if image_check_valid(image["info"]):
+            image_dir_name = dir_name + "/" + str(id_image)
+            os.makedirs(image_dir_name)
+
+            infos = []
+            id_info = 0
+
+            for info in image["info"]:
+                if info_check_valid(info):
+                    try:
+                        r = requests.get(info["src"])
+                    except requests.exceptions.HTTPError as e:
+                        print(f'HTTP Error: {e}')
+                        continue
+                    except requests.exceptions.RequestException as e:
+                        print(f'Request Error: {e}')
+                        continue
+
+                    info_dir_name = image_dir_name + "/" + str(id_info)
+                    os.makedirs(info_dir_name)
+
+                    screenshot_filepath = "./tmp/" + str(image["tag"]) + "_" + str(info["inner_id"]) + ".png"
+                    shutil.move(screenshot_filepath, info_dir_name + "/screenshot.png")
+                    Image.open(io.BytesIO(r.content)).save(info_dir_name + "/source." + imghdr.what(None, h=r.content))
+
+                    info_output = info.copy()
+                    info_output["inner_id"] = id_info
+                    infos.append(info_output)
+
+                    id_info = id_info + 1
+
+            infos_file = pd.ExcelWriter(image_dir_name + "/infos.xlsx")
+            transform_infos_to_dataframe(infos).to_excel(infos_file, index=True)
+            infos_file.close()
+
+            id_image = id_image + 1
+
+    metadata = {'width': width, 'height': height}
+    pf = pd.json_normalize(data=metadata)
+    meta_file = pd.ExcelWriter(dir_name + "/meta.xlsx")
+    pf.to_excel(meta_file, encoding='utf-8', index=True)
+    meta_file.close()
 
 
 if __name__ == "__main__":
@@ -277,30 +517,16 @@ if __name__ == "__main__":
                                 'x' + str(screen.winfo_screenheight()))
     driver = webdriver.Chrome(options=chrome_options)
 
+    image_id = 0
+    iframe_id = 1
+    image_list = []
+
     m = 0
     times = 0
-    for url in urls:
-        times = times+1
-        # print("This is " + url)
 
-        pic = xlwt.Workbook(encoding='utf-8', style_compression=0)
-        sheet = pic.add_sheet('广告收集', cell_overwrite_ok=True)
-        sheet.write(0, 0, 'src')
-        sheet.write(0, 1, 'pos_x')
-        sheet.write(0, 2, 'pos_y')
-        sheet.write(0, 3, 'size_x')
-        sheet.write(0, 4, 'size_y')
-        sheet.write(0, 5, '广告种类')
-        sheet.write(0, 6, '亮度')
-        sheet.write(0, 7, '饱和度')
-        sheet.write(0, 8, '来源')
-        sheet.write(0, 9, '图片总量')
-        sheet.write(0, 10, '页面总面积')
-        sheet.write(0, 11, '文字')
-        sheet.write(0, 12, "minmax")
-        sheet.write(0, 18, "颜色种类数")
-        sheet.write(0, 19, "最大颜色数量占据的比例")
-        sheet.write(0, 20, "最大颜色RGB值")
+    for url in urls:
+        times = times + 1
+        # print("This is " + url)
 
         n = 1
         m = m + 1
@@ -310,20 +536,34 @@ if __name__ == "__main__":
             whole_page_height = scroll_through_whole_page(driver)
             whole_page_width = task.get_width(driver)
 
-            # 获取页面总面积
-            total_area = whole_page_width * whole_page_height
-
             # 设置浏览器大小为全页面大小，仅限headless模式下可用
             driver.set_window_size(whole_page_width, whole_page_height)
 
+            # 获取页面总面积
+            total_area = whole_page_width * whole_page_height
+
         except Exception as e:
             print("driver get error")
+            continue
 
         # driver.implicitly_wait(50)
         time.sleep(5)
 
         add_tag_for_main_and_iframe(driver)
 
+        # import_domtoimage_in_main_and_iframe(driver)
+        # import_fireshot_in_main_and_iframe(driver)
+
         update_information_in_image_list(driver)
+
+        # set_interval_in_main_and_iframe(driver)
+
+        # time.sleep(3)
+
+        track_imgs_in_image_list(driver)
+        # driver.switch_to.default_content()
+        # log = driver.execute_script("return log_dic")
+
+        write_to_file(url, whole_page_height, whole_page_width)
 
     driver.close()
