@@ -1,6 +1,5 @@
 import base64
 import requests
-import xlwt
 import time
 import pandas as pd
 import re
@@ -381,6 +380,8 @@ def track_imgs_in_image_list(driver):
                 print(f"Failed to switch to frame {iframe_tag}. Reason: {e}")
                 continue
 
+        print(">>>>Tracking image: %d/%d" % (image["tag"], len(image_list)))
+
         max_size = 6
         max_time, once_time, timer = 4000, 1000, 0
         while len(image["info"]) <= max_size:
@@ -468,21 +469,34 @@ def write_to_file(url, height, width):
 
         for info in image["info"]:
             if info_check_valid(info):
+                req = True
                 try:
                     r = requests.get(info["src"])
                 except requests.exceptions.HTTPError as e:
                     print(f'HTTP Error: {e}')
                     continue
                 except requests.exceptions.RequestException as e:
-                    print(f'Request Error: {e}')
-                    continue
+                    if "base64" in info["src"]:
+                        src_encode = info["src"].split(',')[-1]
+                        try:
+                            content = base64.b64decode(src_encode)
+                            req = False
+                        except binascii.Error as err:
+                            print(f'Decode Error: {err}')
+                            continue
+                    else:
+                        print(f'Request Error: {e}')
+                        continue
 
                 info_dir_name = image_dir_name + "/" + str(id_info)
                 os.makedirs(info_dir_name)
 
                 screenshot_filepath = "./tmp/" + str(image["tag"]) + "_" + str(info["inner_id"]) + ".png"
                 shutil.move(screenshot_filepath, info_dir_name + "/screenshot.png")
-                Image.open(io.BytesIO(r.content)).save(info_dir_name + "/source." + imghdr.what(None, h=r.content))
+                if req:
+                    Image.open(io.BytesIO(r.content)).save(info_dir_name + "/source." + (imghdr.what(None, h=r.content) or 'jpg'))
+                else:
+                    Image.open(io.BytesIO(content)).save(info_dir_name + "/source." + (imghdr.what(None, h=content) or 'jpg'))
 
                 info_output = info.copy()
                 info_output["inner_id"] = id_info
@@ -528,7 +542,7 @@ if __name__ == "__main__":
 
     for url in urls:
         times = times + 1
-        # print("This is " + url)
+        print(">>Tracking url: " + url)
 
         n = 1
         m = m + 1
@@ -559,7 +573,7 @@ if __name__ == "__main__":
 
         # time.sleep(3)
 
-        # track_imgs_in_image_list(driver)
+        track_imgs_in_image_list(driver)
 
         write_to_file(url, whole_page_height, whole_page_width)
 
