@@ -1,8 +1,12 @@
 # Temp File
 tmp/*
 
-#Output File
+# Output File
 out/*
+
+# Keep the empty dir - out, tmp
+!out/.gitkeep
+!tmp/.gitkeep
 
 # node_modules
 node_modules
