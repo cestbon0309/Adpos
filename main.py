@@ -7,6 +7,8 @@ import os
 import io
 import imghdr
 import binascii
+import cv2
+from math import sqrt
 
 from selenium import webdriver
 
@@ -518,6 +520,29 @@ def write_to_file(url, height, width):
     meta_file = pd.ExcelWriter(dir_name + "/meta.xlsx")
     pf.to_excel(meta_file, index=True)
     meta_file.close()
+
+
+def template_match(origin_path,template_path):
+    threadshold = 0.5
+    image = cv2.imread(origin_path)
+    template = cv2.imread(template_path)
+    #将图像和模板都转换为灰度
+    imageGray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    templateGray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+    result = cv2.matchTemplate(imageGray, templateGray,	cv2.TM_CCOEFF_NORMED)
+    (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(result)
+    print(maxVal)
+    color = (0,0,255)
+    if maxVal >= threadshold:
+        color = (0,255,0)
+
+    (startX, startY) = maxLoc
+    endX = startX + template.shape[1]
+    endY = startY + template.shape[0]
+    center_x = (startX+endX)/2
+    center_y = (startY+endY)/2
+    dist_offset = sqrt((center_x - image.shape[1]/2)*(center_x - image.shape[1]/2)+(center_y - image.shape[0]/2)*(center_y - image.shape[0]/2))
+    return True if maxVal>threadshold else False, dist_offset
 
 
 if __name__ == "__main__":
