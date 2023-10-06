@@ -5,8 +5,7 @@ tmp/*
 out/*
 
 # Keep the empty dir - out, tmp
-!out/.gitkeep
-!tmp/.gitkeep
+!*/.gitkeep
 
 # node_modules
 node_modules
