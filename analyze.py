@@ -1,6 +1,8 @@
 import os
 import pandas as pd
 from cnocr import CnOcr
+import getopt
+import sys
 import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib
@@ -8,9 +10,15 @@ matplotlib.use('TkAgg')
 
 
 if __name__ == "__main__":
+    input_dir = None
+    opts, args = getopt.getopt(sys.argv[1:], 'i:')
+    for opt_name, opt_value in opts:
+        if opt_name == '-i':
+            input_dir = opt_value
+
     ocr = CnOcr(rec_model_name='ch_PP-OCRv3')  # 所有参数都使用默认值
 
-    dir_path = "./out"
+    dir_path = input_dir
     url_dirs = os.listdir(dir_path)
     for file in url_dirs:
         url_dir_path = os.path.join(dir_path, file)
@@ -105,6 +113,26 @@ if __name__ == "__main__":
             plt.ylabel('频数')
             # 添加标题
             plt.title('pos_x of the all type')
+            # 显示图例
+            plt.legend()
+            # 显示图形
+            plt.show()
+
+            # rel_pos_y
+
+            plt.style.use('ggplot')
+            # 处理中文乱码
+            plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']
+            # 坐标轴负号的处理
+            plt.rcParams['axes.unicode_minus'] = False
+            # 绘制直方图
+            sns.distplot(ad_pr["rel_pos_y"], bins=20, kde=False, hist_kws={'color': 'yellow'}, label='ad')
+            sns.distplot(nor_pr["rel_pos_y"], bins=20, kde=False, hist_kws={'color': 'steelblue'}, label='not ad')
+
+            plt.xlabel('pos_y')
+            plt.ylabel('频数')
+            # 添加标题
+            plt.title('pos_y of the all type')
             # 显示图例
             plt.legend()
             # 显示图形

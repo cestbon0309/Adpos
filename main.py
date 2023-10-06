@@ -1,25 +1,31 @@
 import base64
+
+import PIL
 import requests
 import time
 import pandas as pd
 import re
 import os
 import io
+import sys
 import imghdr
 import binascii
-
-from selenium import webdriver
+import getopt
+import urllib.parse as urlparse
+import urllib3.exceptions as urlexceptions
 
 import task
 from PIL import Image
+import cairosvg
 import shutil
+from selenium import webdriver
 from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 
 import tkinter
 
-# global counter for <img>
+# global counter for <img> and <iframe>
 image_id = 0
 iframe_id = 1
 
@@ -248,7 +254,7 @@ def scroll_through_whole_page(driver):
     return initial_height
 
 
-def update_information_in_image_list(driver):
+def update_information_in_image_list(driver, screen_width, screen_height):
     for iframe_tag in range(iframe_id):
         driver.switch_to.default_content()
 
@@ -310,6 +316,13 @@ def update_information_in_image_list(driver):
             # element_screenshot.show()
             element_screenshot.save("./tmp/" + str(image["tag"]) + "_" + str(image_info["inner_id"]) + ".png")
 
+            bigger_screenshot = full_screenshot.crop((pos[0] - screen_width / 2,
+                                                      pos[1] - screen_height / 2,
+                                                      pos[0] + size[0] + screen_width / 2,
+                                                      pos[1] + size[1] + screen_height / 2))
+            # bigger_screenshot.show()
+            bigger_screenshot.save("./tmp/" + str(image["tag"]) + "_" + str(image_info["inner_id"]) + "_big.png")
+
 
 def set_interval_in_main_and_iframe(driver):
     for iframe_tag in range(iframe_id):
@@ -365,7 +378,7 @@ def not_in_list(infos, src, size, pos):
     return True
 
 
-def track_imgs_in_image_list(driver):
+def track_imgs_in_image_list(driver, screen_width, screen_height):
     for image in image_list:
         driver.switch_to.default_content()
         offset = (0, 0)
@@ -425,6 +438,13 @@ def track_imgs_in_image_list(driver):
                     # element_screenshot.show()
                     element_screenshot.save("./tmp/" + str(image["tag"]) + "_" + str(image_info["inner_id"]) + ".png")
 
+                    bigger_screenshot = screenshot.crop((pos[0] - screen_width / 2,
+                                                         pos[1] - screen_height / 2,
+                                                         pos[0] + size[0] + screen_width / 2,
+                                                         pos[1] + size[1] + screen_height / 2))
+                    # bigger_screenshot.show()
+                    bigger_screenshot.save("./tmp/" + str(image["tag"]) + "_" + str(image_info["inner_id"]) + "_big.png")
+
             time.sleep(once_time/1000.0)
             timer = timer + once_time
             if timer >= max_time:
@@ -451,8 +471,32 @@ def image_check_valid(infos):
     return False
 
 
-def write_to_file(url, height, width):
-    dir_name = './out/' + re.sub(r'[\\/:*?"<>|]', '_', url)
+def extract_from_url(image_url):
+    if "data:image" in image_url:
+        if "/jpeg" in image_url:
+            return "jpg"
+        if "/png" in image_url:
+            return "png"
+        if "/gif" in image_url:
+            return "gif"
+        if "/svg+xml" in image_url:
+            return "svg"
+
+    if ".svg" in image_url:
+        return "svg"
+    if ".jpeg" in image_url or ".jpg" in image_url:
+        return "jpg"
+    if ".png" in image_url:
+        return "png"
+    if ".webp" in image_url:
+        return "webp"
+
+    return "jpg"
+
+
+def write_to_file(output_dir, url, height, width):
+    print("Write information...")
+    dir_name = os.path.join(output_dir, re.sub(r'[\\/:*?"<>|]', '_', url))
 
     if os.path.exists(dir_name):
         shutil.rmtree(dir_name)
@@ -461,7 +505,7 @@ def write_to_file(url, height, width):
 
     id_image = 0
     for image in image_list:
-        image_dir_name = dir_name + "/" + str(id_image)
+        image_dir_name = os.path.join(dir_name, str(id_image))
         os.makedirs(image_dir_name)
 
         infos = []
@@ -469,34 +513,57 @@ def write_to_file(url, height, width):
 
         for info in image["info"]:
             if info_check_valid(info):
-                req = True
+                url_modified = ""
                 try:
-                    r = requests.get(info["src"])
+                    url_modified = urlparse.urlunparse(urlparse.urlparse(urlparse.urljoin(driver.current_url, info["src"]), scheme="http"))
+                    content = requests.get(url_modified).content
+                except urlexceptions.LocationParseError as e:
+                    print(f'Urllib Error: {e}')
+                    continue
                 except requests.exceptions.HTTPError as e:
                     print(f'HTTP Error: {e}')
                     continue
                 except requests.exceptions.RequestException as e:
-                    if "base64" in info["src"]:
+                    if "data:image/" in info["src"]:
                         src_encode = info["src"].split(',')[-1]
-                        try:
-                            content = base64.b64decode(src_encode)
-                            req = False
-                        except binascii.Error as err:
-                            print(f'Decode Error: {err}')
-                            continue
+                        if ";base64" in info["src"]:
+                            try:
+                                content = base64.b64decode(src_encode)
+                            except binascii.Error as err:
+                                print(f'Decode Error: {err}')
+                                continue
+                        else:
+                            content = bytes(urlparse.unquote(src_encode).encode())
                     else:
                         print(f'Request Error: {e}')
                         continue
 
-                info_dir_name = image_dir_name + "/" + str(id_info)
+                image_type = imghdr.what(None, h=content) or extract_from_url(url_modified)
+
+                info_dir_name = os.path.join(image_dir_name, str(id_info))
                 os.makedirs(info_dir_name)
 
                 screenshot_filepath = "./tmp/" + str(image["tag"]) + "_" + str(info["inner_id"]) + ".png"
                 shutil.move(screenshot_filepath, info_dir_name + "/screenshot.png")
-                if req:
-                    Image.open(io.BytesIO(r.content)).save(info_dir_name + "/source." + (imghdr.what(None, h=r.content) or 'jpg'))
-                else:
-                    Image.open(io.BytesIO(content)).save(info_dir_name + "/source." + (imghdr.what(None, h=content) or 'jpg'))
+
+                big_screenshot_filepath = "./tmp/" + str(image["tag"]) + "_" + str(info["inner_id"]) + "_big.png"
+                shutil.move(big_screenshot_filepath, info_dir_name + "/bigshot.png")
+
+                if image_type == "svg":
+                    try:
+                        content = cairosvg.svg2png(bytestring=content)
+                    except Exception as e:
+                        print(f'Failed to translate svg to png, {e}')
+                        shutil.rmtree(info_dir_name)
+                        continue
+                    image_type = "png"
+
+                try:
+                    Image.open(io.BytesIO(content)).save(info_dir_name + "/source." + image_type)
+                except Exception as e:
+                    print(f'Can not open file: {url_modified} as an image.')
+                    shutil.rmtree(info_dir_name)
+                    continue
 
                 info_output = info.copy()
                 info_output["inner_id"] = id_info
@@ -515,39 +582,64 @@ def write_to_file(url, height, width):
 
     metadata = {'width': width, 'height': height}
     pf = pd.json_normalize(data=metadata)
+    pf['type'] = None
     meta_file = pd.ExcelWriter(dir_name + "/meta.xlsx")
     pf.to_excel(meta_file, index=True)
     meta_file.close()
 
+    print('Done')
+
 
 if __name__ == "__main__":
-    with open('./resource/urls.txt', 'r', encoding='utf8') as f:
-        urls = f.readlines()
+    output_dir = None
+    input_path = None
+    fromto = None
+    opts, args = getopt.getopt(sys.argv[1:], 'o:i:', longopts=['index='])
+    for opt_name, opt_value in opts:
+        if opt_name == '-o':
+            output_dir = opt_value
+        if opt_name == '-i':
+            input_path = opt_value
+        if opt_name == '--index':
+            fromto = opt_value
 
-    screen = tkinter.Tk()
+    url_df = pd.read_csv(input_path, header=None)
+    urls = url_df.iloc[:, 1].values.tolist()
+
+    index_begin, index_end = 0, len(urls)
+
+    if fromto:
+        split = fromto.split(',')
+        user_begin = split[0] if len(split[0]) else "0"
+        user_end = split[1] if len(split[1]) else "2100000000"
+        index_begin = max(index_begin, int(user_begin))
+        index_end = min(index_end, int(user_end) + 1)
+
+    # screen = tkinter.Tk()
+    # screen_width, screen_height = screen.winfo_screenwidth(), screen.winfo_screenheight()
+    screen_width, screen_height = 1920, 1080
 
     # 创建驱动
     chrome_options = Options()
     chrome_options.add_argument('--headless')
-    chrome_options.add_argument('--window-size=' + str(screen.winfo_screenwidth()) +
-                                'x' + str(screen.winfo_screenheight()))
-    driver = webdriver.Chrome(options=chrome_options)
+    chrome_options.add_argument('--window-size=' + str(screen_width) + 'x' + str(screen_height))
 
-    image_id = 0
-    iframe_id = 1
-    image_list = []
+    for url in urls[index_begin:index_end]:
+        image_id = 0
+        iframe_id = 1
+        image_list = []
 
-    m = 0
-    times = 0
+        driver = webdriver.Chrome(options=chrome_options)
 
-    for url in urls:
-        times = times + 1
-        print(">>Tracking url: " + url)
+        if not url.startswith("//"):
+            url = "//" + url
+        url_reg = urlparse.urlunparse(urlparse.urlparse(url, scheme="http"))
+        print(">>Tracking url: " + url_reg)
 
-        n = 1
-        m = m + 1
         try:
-            driver.get(url)
+            driver.get(url_reg)
+
+            time.sleep(5)
 
             whole_page_height = scroll_through_whole_page(driver)
             whole_page_width = task.get_width(driver)
@@ -556,25 +648,25 @@ if __name__ == "__main__":
             driver.set_window_size(whole_page_width, whole_page_height)
 
         except Exception as e:
-            print("driver get error")
+            print(f"driver get error {e}")
             continue
 
         # driver.implicitly_wait(50)
-        time.sleep(5)
+        time.sleep(30)
 
         add_tag_for_main_and_iframe(driver)
 
         # import_domtoimage_in_main_and_iframe(driver)
         # import_fireshot_in_main_and_iframe(driver)
 
-        update_information_in_image_list(driver)
+        update_information_in_image_list(driver, screen_width, screen_height)
 
         # set_interval_in_main_and_iframe(driver)
 
         # time.sleep(3)
 
-        track_imgs_in_image_list(driver)
+        track_imgs_in_image_list(driver, screen_width, screen_height)
 
-        write_to_file(url, whole_page_height, whole_page_width)
+        write_to_file(output_dir, url_reg, whole_page_height, whole_page_width)
 
-    driver.close()
+        driver.quit()
