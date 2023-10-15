@@ -24,13 +24,15 @@ source_label = None
 
 
 def template_match(origin_path,template_path):
-    threshold = 0.6
+    threshold = 0.75
     image = imageio.imread(origin_path)
     template = imageio.imread(template_path)
     # !!!使用cv2默认的imread会无法读取gif等格式 这里用imageio
     # 将图像和模板都转换为灰度
     imageGray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
     templateGray = cv2.cvtColor(template, cv2.COLOR_RGB2GRAY)
+    if template.shape[0] > image.shape[0] or template.shape[1] > image.shape[1]:
+        return False, -1
 
     result = cv2.matchTemplate(imageGray, templateGray, cv2.TM_CCOEFF_NORMED)
     (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(result)
@@ -38,7 +40,8 @@ def template_match(origin_path,template_path):
     color = (0,0,255)
     if maxVal >= threshold:
         color = (0,255,0)
-
+    if maxVal == 1.0:
+        maxVal = 0#剔除无效结果
     (startX, startY) = maxLoc
     endX = startX + template.shape[1]
     endY = startY + template.shape[0]
@@ -49,7 +52,7 @@ def template_match(origin_path,template_path):
 
 
 def open_folder():
-    global main_folder_path,total_folder_num
+    global main_folder_path,total_folder_num,current_sub_folder_index,current_main_folder_index
     folder_path = filedialog.askdirectory()  # 打开文件夹选择对话框
     if folder_path:
         main_folder_path = folder_path
@@ -58,7 +61,22 @@ def open_folder():
         print(os.listdir(main_folder_path))
         print(total_folder_num)
         total_folder_num-=1
+        for widget in checkboxes_frame.winfo_children():
+            widget.destroy()
+        current_main_folder_index = 0
+        current_sub_folder_index = 0
         load_images()
+
+class fuck_pussy():
+    name = ''
+    fucker = ''
+    def __init__(self,name,fucker) -> None:
+        self.name = name
+        self.fucker = fucker
+        pass
+    
+    def fuck(self):
+        print(f'小比{self.name}挨测，{self.fucker}的东西大不大，爽不爽')
 
 
 def openpic(path):
@@ -109,13 +127,20 @@ def load_images():
         global source_img
         screenshot_images = []
 
+        open_bigshot_buttons = []
+        open_source_buttons = []
+        open_screenshot_buttons = []
+        
         # 获取当前子文件夹内的所有screenshot.png
         for i in range(len(sub_folders)):
             source_image_path = ""
             fnames = os.listdir(os.path.join(main_folder_path,main_folder_name,sub_folders[i]))
+            current_folder_path = os.path.join(main_folder_path,main_folder_name,sub_folders[i])
+            source_fname = ''
             for f in fnames:
                 if f[:6] == "source":
                     source_image_path = os.path.join(current_folder_path, f)
+                    source_fname = f
                     break
             screenshot_image_path = os.path.join(main_folder_path, main_folder_name, sub_folders[i], "screenshot.png")
             screenshot_img = Image.open(screenshot_image_path)
@@ -133,7 +158,13 @@ def load_images():
             source_label = ttk.Label(checkboxes_frame,image=source_img)
             valid_checkbox = ttk.Checkbutton(checkboxes_frame, text="Valid")
             ad_checkbox = ttk.Checkbutton(checkboxes_frame, text="Ad")
-            open_full_button = ttk.Button(checkboxes_frame,text='打开大图',command= lambda:openpic(os.path.join(current_folder_path,'bigshot.png')))
+            #open_full_button = ttk.Button(checkboxes_frame,text='打开大图', command= lambda:show_img(os.path.join(current_folder_path,'bigshot.png')))
+            #open_source_button = ttk.Button(checkboxes_frame,text='打开原图', command = lambda:show_img(os.path.join(main_folder_path,main_folder_name,str(i),source_fname)))
+            #open_screenshot_button = ttk.Button(checkboxes_frame,text='打开截图', command = lambda:show_img(screenshot_image_path))
+            open_full_button = ttk.Button(checkboxes_frame,text='打开大图', command= lambda f=os.path.join(current_folder_path,'bigshot.png'):show_img(f))
+            open_source_button = ttk.Button(checkboxes_frame,text='打开原图', command = lambda f=os.path.join(current_folder_path,source_fname):show_img(f))
+            open_screenshot_button = ttk.Button(checkboxes_frame,text='打开截图', command = lambda f=os.path.join(current_folder_path,'screenshot.png'):show_img(f))
+            #similarity_text = ttk.Label(checkboxes_frame,text=)
             # 初始化复选框
             valid_checkbox.state(['!alternate'])
             ad_checkbox.state(['!alternate'])
@@ -144,10 +175,13 @@ def load_images():
             valid_checkbox.grid(row=i, column=2, padx=5, pady=5)
             ad_checkbox.grid(row=i, column=3, padx=5, pady=5)
             open_full_button.grid(row=i,column=4,padx=5,pady=5)
-
+            open_source_button.grid(row=i,column=5,padx=5,pady=5)
+            open_screenshot_button.grid(row=i,column=6,padx=5,pady=5)
 
             if i == best_optn:
-                valid_checkbox.state(['selected'])
+                #valid_checkbox.state(['selected'])
+                recommend_label = ttk.Label(checkboxes_frame,text="MATCH",font=('微软雅黑',20),foreground='green')
+                recommend_label.grid(row=i,column=7,padx=5,pady=5)
             # 从infos.xlsx读取并设置复选框状态
             valid_value = ws.cell(row=i+2, column=5).value
             ad_value = ws.cell(row=i+2, column=6).value
@@ -158,6 +192,7 @@ def load_images():
 
         # 释放infos.xlsx文件
         wb.close()
+        update_scrollregion()
 
 def save_changes():
     global total_folder_num,current_main_folder_index
@@ -199,13 +234,11 @@ def save_changes():
     load_images()
     update_scrollregion()
 
-def show_full():
-    global current_main_folder_index
-    global main_folder_name
-    current_folder_path = os.path.join(main_folder_path, str(current_main_folder_index))
-    full_img_name = ''
-    path000 = os.path.join(current_folder_path,full_img_name)
-    os.system('start '+path000)
+
+def show_img(img_path):
+
+    os.system(f'''\"{img_path}\"''')
+    print(f'''\"{img_path}\"''')
 
 def back():
     global current_main_folder_index
@@ -239,7 +272,7 @@ if __name__ == '__main__':
 
     root = tk.Tk()
     root.title("img tagger")
-    root.geometry('800x1000')
+    root.geometry('1280x720')
 
     main_folder_path = ""
     main_folders = []
@@ -260,9 +293,6 @@ if __name__ == '__main__':
 
     open_folder_button = ttk.Button(root, text="打开文件夹", command=open_folder)
     open_folder_button.pack(padx=20, pady=5)
-
-    show_full_screenshot = ttk.Button(root,text = '打开完整屏幕截图',command = show_full)
-    show_full_screenshot.pack(padx=20, pady=5)
 
     save_button = ttk.Button(root, text="保存修改", command=save_changes)
     save_button.pack(padx=20, pady=5)
